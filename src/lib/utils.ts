@@ -131,16 +131,22 @@ export const Scroll = {
 }
 
 export const Utils = {
+    calculateArraySum(array: number[]): number {
+        return array.reduce(function (prev, current) {
+            return prev + current
+        })
+    },
+
     roundFloatToDigit(num: number, digit: number): number {
         const pow = Math.pow(10, digit)
         return Math.round(num * pow) / pow
     },
 
-    calcurateIncreaseRate(min: number, max: number, refLv: number): number {
+    calculateIncreaseRate(min: number, max: number, refLv: number): number {
         return this.roundFloatToDigit((max - min) / (refLv - 1), 2)
     },
 
-    calcurateIncreasedParam(min: number, increase: number, refLv: number): number {
+    calculateIncreasedParam(min: number, increase: number, refLv: number): number {
         return Math.round(min + increase * (refLv - 1))
     },
 

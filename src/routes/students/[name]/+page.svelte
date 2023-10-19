@@ -1,8 +1,14 @@
 <script lang="ts">
-    import type { EquipmentInfo, ItemInfo, StudentExSkillInfo, StudentInfo, StudentSkillInfo } from "$lib/types"
+    import type { EquipmentInfo, ItemInfo, StudentExSkillInfo, StudentInfo, StudentParams, StudentSkillInfo } from "$lib/types"
     import { Utils } from "$lib/utils.js"
+    import Students from "$lib/datas/studentList.json"
     import Items from "$lib/datas/itemList.json"
     import { CURRENT_LEVEL_CAP, EQUIPMENT_PARAMS_DICT, LATEST_EQUIPMENT_TIER } from "$lib/constants"
+    import { onMount } from "svelte"
+
+    const students: StudentInfo[] = structuredClone(Students) as StudentInfo[]
+
+    let ApexCharts: any
 
     export let data: {
         studentInfo: StudentInfo
@@ -12,6 +18,14 @@
         type: keyof typeof SKILL_TYPE_LABEL_DICT
         info: StudentSkillInfo
     }[]
+
+    type CompareParams = {
+        hitpoint: number
+        atk: number
+        def: number
+        heal: number
+        stabillity: number
+    }
 
     const items = structuredClone(Items) as ItemInfo[]
     const equipments = items.filter((item) => item.category == "装備品") as EquipmentInfo[]
@@ -88,7 +102,6 @@
             name: "装備品3"
         }
     ] as const
-
     const PARAMS_LABEL_NAMES = [
         {
             id: "accuracy",
@@ -111,7 +124,6 @@
             name: "安定値"
         }
     ] as const
-
     const SKILL_TYPE_LABEL_DICT = {
         normal: "ノーマルスキル",
         normalPlus: "ノーマルスキル+",
@@ -119,30 +131,34 @@
         passivePlus: "パッシブスキル+",
         sub: "サブスキル"
     } as const
-
+    const COMPARE_PARAMS_CATEGORIES = ["最大HP", "攻撃力", "防御力", "治癒力", "安定値"] as const
     const SKILL_EFFECT_VALUE_REGEX = RegExp(/\d+(\.\d+)?(([%秒回個つ]|発分)?)?(?![人体])/g)
+
+    const studentCompareParams = extractParams(data.studentInfo.params)
 
     let basicParams = calculateBasicParams()
     let displayedEquipments = setDisplayedEquipments(data.studentInfo, equipmentTier)
     let displayedSkills = setDisplayedSkills()
+    let averageParams = calculateAverageParams(students)
+    let studentParamsChartElement: HTMLDivElement
 
     function calculateBasicParams() {
         return [
             {
                 key: "最大HP",
-                value: Utils.calcurateIncreasedParam(data.studentInfo.params.minHitpoint, data.studentInfo.params.hitpointIncrease, referenceLevel)
+                value: Utils.calculateIncreasedParam(data.studentInfo.params.minHitpoint, data.studentInfo.params.hitpointIncrease, referenceLevel)
             },
             {
                 key: "攻撃力",
-                value: Utils.calcurateIncreasedParam(data.studentInfo.params.minAtk, data.studentInfo.params.atkIncrease, referenceLevel)
+                value: Utils.calculateIncreasedParam(data.studentInfo.params.minAtk, data.studentInfo.params.atkIncrease, referenceLevel)
             },
             {
                 key: "防御力",
-                value: Utils.calcurateIncreasedParam(data.studentInfo.params.minDef, data.studentInfo.params.defIncrease, referenceLevel)
+                value: Utils.calculateIncreasedParam(data.studentInfo.params.minDef, data.studentInfo.params.defIncrease, referenceLevel)
             },
             {
                 key: "治癒力",
-                value: Utils.calcurateIncreasedParam(data.studentInfo.params.minHeal, data.studentInfo.params.healIncrease, referenceLevel)
+                value: Utils.calculateIncreasedParam(data.studentInfo.params.minHeal, data.studentInfo.params.healIncrease, referenceLevel)
             }
         ]
     }
@@ -196,6 +212,45 @@
         return skills
     }
 
+    function constructParamsChartOptions(studentName: string, params: CompareParams, averageParams: CompareParams) {
+        return {
+            series: [
+                {
+                    name: "平均値",
+                    data: Object.values(averageParams)
+                },
+                {
+                    name: studentName,
+                    data: Object.values(params)
+                }
+            ],
+            chart: {
+                type: "bar",
+                height: 400,
+                width: "100%",
+                toolbar: {
+                    show: false
+                }
+            },
+            tooltip: {
+                fillSeriesColor: false
+            },
+            dataLabels: {
+                enabled: false
+            },
+            xaxis: {
+                categories: COMPARE_PARAMS_CATEGORIES
+            },
+            yaxis: {
+                logarithmic: true,
+                forceNiceScale: true,
+                labels: {
+                    show: false
+                }
+            }
+        }
+    }
+
     function formatSkillDesc(skill: StudentSkillInfo | StudentExSkillInfo, level: number): string {
         let desc = skill.skillDesc
         Array.from(desc.matchAll(/\{p\d\}/g)).forEach((placeholder, index) => {
@@ -205,6 +260,56 @@
 
         return desc.replaceAll(SKILL_EFFECT_VALUE_REGEX, "<b class='skill-param'>$&</b>")
     }
+
+    function extractParams(params: StudentParams) {
+        const extractedParams = {
+            hitpoint: Utils.calculateIncreasedParam(params.minHitpoint, params.hitpointIncrease, CURRENT_LEVEL_CAP),
+            atk: Utils.calculateIncreasedParam(params.minAtk, params.atkIncrease, CURRENT_LEVEL_CAP),
+            def: Utils.calculateIncreasedParam(params.minDef, params.defIncrease, CURRENT_LEVEL_CAP),
+            heal: Utils.calculateIncreasedParam(params.minHeal, params.healIncrease, CURRENT_LEVEL_CAP),
+            stabillity: params.stability
+        }
+
+        return extractedParams
+    }
+
+    function calculateAverageParams(students: StudentInfo[]): CompareParams {
+        const otherStudents = students.filter((student) => student.name != data.studentInfo.name)
+        const STUDENTS_NUMBER = otherStudents.length
+
+        const paramsArray = otherStudents.map((student) => extractParams(student.params))
+
+        const maxHitpointArray = paramsArray.map((param) => param.hitpoint)
+        const maxAtkArray = paramsArray.map((param) => param.atk)
+        const maxDefArray = paramsArray.map((param) => param.def)
+        const maxHealArray = paramsArray.map((param) => param.heal)
+        const stabilityArray = paramsArray.map((param) => param.stabillity)
+
+        const averageHitpoint = Math.round(Utils.calculateArraySum(maxHitpointArray) / STUDENTS_NUMBER)
+        const averageAtk = Math.round(Utils.calculateArraySum(maxAtkArray) / STUDENTS_NUMBER)
+        const averageDef = Math.round(Utils.calculateArraySum(maxDefArray) / STUDENTS_NUMBER)
+        const averageHeal = Math.round(Utils.calculateArraySum(maxHealArray) / STUDENTS_NUMBER)
+        const averageStabillity = Math.round(Utils.calculateArraySum(stabilityArray) / STUDENTS_NUMBER)
+
+        const averageParams: CompareParams = {
+            hitpoint: averageHitpoint,
+            atk: averageAtk,
+            def: averageDef,
+            heal: averageHeal,
+            stabillity: averageStabillity
+        }
+
+        return averageParams
+    }
+
+    onMount(async () => {
+        ApexCharts = (await import("apexcharts")).default
+
+        const options = constructParamsChartOptions(data.studentInfo.name, studentCompareParams, averageParams)
+        const chart = new ApexCharts(studentParamsChartElement, options)
+
+        chart.render()
+    })
 
     $: {
         // Update basicParams when referenceLevel is updated
@@ -398,6 +503,10 @@
                     <p>スキルが最大レベルに達しました。</p>
                 </div>
             {/if}
+        </section>
+        <section class="student-detail">
+            <h2>他の生徒との比較</h2>
+            <div bind:this={studentParamsChartElement} />
         </section>
     </div>
 </section>
